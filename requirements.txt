@@ -1,5 +1,5 @@
 fastapi
 uvicorn[standard]
-youtube-transcript-api
+yt-dlp
 python-dotenv
 google-genai
