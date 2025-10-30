@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: yt-summarizer-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: GOOGLE_API_KEY
+        # Bu değeri GİZLİ TUTUN! Render arayüzünde override edeceğiz.
+        value: "PLACEHOLDER_FOR_API_KEY"
