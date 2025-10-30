@@ -14,8 +14,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-
-from yt_dlp import YoutubeDL
+from youtube_transcript_api import (
+    YouTubeTranscriptApi,
+    TranscriptsDisabled,
+    NoTranscriptFound,
+    VideoUnavailable,
+)
 
 from dotenv import load_dotenv
 from google import genai
@@ -120,66 +124,42 @@ def extract_video_id(url_or_id: str) -> str:
     raise ValueError("Video ID bulunamadı. Geçerli bir YouTube URL'si veya video ID gönderin.")
 
 
-# -------- AŞAMA 1: URL -> Transkript (yt-dlp ile) --------
-def fetch_transcript(url: str, prefer_langs: Optional[List[str]] = None) -> str:
+def fetch_transcript(
+    url_or_id: str,
+    prefer_langs: Optional[List[str]] = None,
+    preserve_formatting: bool = False,
+) -> str:
     """
-    yt-dlp kullanarak verilen YouTube URL’sinden transkript metnini döndürür.
+    YouTube videosunun transkript metnini çeker.
+    1️⃣ Video ID’yi çıkarır
+    2️⃣ youtube-transcript-api üzerinden fetch() çağrısı yapar
+    3️⃣ Transcript’teki snippet text’lerini birleştirir
     """
-
-    # prefer_langs şu anda yt-dlp tarafından otomatik yönetilir
-    # yt-dlp'nin sadece transkripti çekmesini sağlayan ayarlar
-    ydl_opts = {
-        'writesubtitles': True,             # Altyazıları indirmeyi etkinleştir
-        'skip_download': True,              # Videoyu indirmeyi atla
-        'subtitleslangs': prefer_langs or ['tr', 'en'], # Tercih edilen diller
-        'subtitlesformat': 'srv3',          # Altyazı formatı
-        'quiet': True,                      # Çıktıları gizle
-        'noprogress': True,                 # İlerleme çubuğunu gizle
-        'force_generic_extractor': True     # Genel çıkarıcıyı zorla
-    }
+    vid = extract_video_id(url_or_id)
+    languages = prefer_langs or DEFAULT_LANGS
 
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        # Transcript'i belirtilen dil önceliğine göre getir
+        fetched = ytt_api.fetch(
+            vid,
+            languages=languages,
+            preserve_formatting=preserve_formatting,
+        )
 
-            # Transkript verisini çekme (yt-dlp'nin biraz karmaşık bir yapısı var)
-            subtitles = info.get('subtitles')
-            if not subtitles:
-                raise ValueError("Bu video için transkript bulunamadı veya kapalıdır.")
+        # Gelen snippet'leri birleştir
+        text = " ".join(getattr(s, "text", "").strip() for s in fetched if getattr(s, "text", "").strip())
+        if not text.strip():
+            raise NoTranscriptFound("Transcript boş görünüyor.")
 
-            # Tercih edilen dillerden birini seçme
-            selected_sub = None
-            for lang in prefer_langs or ['tr', 'en']:
-                if subtitles.get(lang):
-                    selected_sub = subtitles[lang][-1] # Genellikle son (en kaliteli) formatı seç
-                    break
+        return text
 
-            if not selected_sub:
-                raise ValueError("Tercih edilen dillerde (tr/en) transkript bulunamadı.")
+    # Beklenen hata türleri (transcript devre dışı, yok, vb.)
+    except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable):
+        raise
 
-            # Transkripti gerçekten çekme (bu, ayrı bir http isteğidir)
-            sub_url = selected_sub['url']
-            import requests
-            transcript_data = requests.get(sub_url).text
-
-            # Sadece metin kısmını temizleme (basit bir temizleme)
-            # Bu kısım karmaşık olabileceği için, şimdilik basit bir temizleme yapalım:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(transcript_data)
-            full_text = " ".join([elem.text for elem in root.findall('.//text') if elem.text])
-
-            if not full_text.strip():
-                 raise ValueError("Transkript içeriği boş.")
-
-            return full_text
-
+    # Diğer (ağ, parse, vs.) hatalar
     except Exception as e:
-        # yt-dlp hatalarını genel ValueError olarak yakalayalım
-        raise ValueError(f"Transcript alınırken hata: {e}")
-
-
-# NOT: extract_video_id fonksiyonunu silebilirsiniz, çünkü yt-dlp doğrudan URL ile çalışır. 
-# Ancak kalsın da, URL'nin geçerliliğini kontrol etmeye yardımcı olur.
+        raise RuntimeError(f"Transcript alınırken beklenmeyen hata: {e}")
 
 
 def build_prompt(text: str, language: str) -> str:
