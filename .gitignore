@@ -1,0 +1,12 @@
+# Sanal ortam
+venv/
+
+# Gizli ortam değişkenleri
+.env
+
+# Python dosyaları
+__pycache__/
+*.pyc
+
+# Uvicorn/FastAPI logları
+*.log
